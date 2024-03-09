@@ -72,19 +72,6 @@ app.UseExceptionHandler(errorApp =>
 
 app.UseHttpsRedirection();
 
-
-
-app.MapGet("/", (ILoggerFactory loggerFactory) =>
-{
-    var logger = loggerFactory.CreateLogger("Index");
-    logger.LogInformation("Navigating to Index endpoint.");
-
-    return "Welcome to the UK weather forecast.";
-})
-.Produces<dynamic>(StatusCodes.Status200OK)
-.WithName("Index")
-.WithTags("Rainfall");
-
 app.MapGet("/stations/{id}", async Task<IResult> (string id, IHttpClientFactory clientFactory, ILoggerFactory loggerFactory) =>
 {
     var logger = loggerFactory.CreateLogger("stations");
