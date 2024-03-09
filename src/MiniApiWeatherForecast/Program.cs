@@ -148,6 +148,81 @@ app.MapGet("/stations/{id}", async Task<IResult> (string id, IHttpClientFactory 
 })
   .WithTags("Rainfall");
 
+app.MapGet("/stations/measures/{id}", async Task<IResult> (string id, IHttpClientFactory clientFactory, ILoggerFactory loggerFactory) =>
+{
+    var logger = loggerFactory.CreateLogger("stations-measures");
+
+    var client = clientFactory.CreateClient("WeatherForecastApi");
+    var res = await client.GetAsync($"/flood-monitoring/id/stations/{id}/measures");
+
+    if (res.IsSuccessStatusCode)
+    {
+        var content = await res.Content.ReadAsStringAsync();
+        return TypedResults.Ok(JsonConvert.DeserializeObject<MeasuresResponse>(content));
+    }
+    else if (res.StatusCode == HttpStatusCode.NotFound)
+    {
+        var errorResponse = new ErrorResponse
+        {
+            Message = "NotFound Request",
+            Detail =
+        [
+            new ErrorDetail
+            {
+                PropertyName = "Request",
+                Message = "Not found for the specified stationId"
+            }
+        ]
+        };
+        return TypedResults.NotFound(JsonConvert.SerializeObject(errorResponse));
+    }
+    else if (res.StatusCode == HttpStatusCode.BadRequest)
+    {
+        var errorResponse = new ErrorResponse
+        {
+            Message = "Bad Request",
+            Detail =
+            [
+                new ErrorDetail
+                {
+                    PropertyName = "Request",
+                    Message = "The request is invalid."
+                }
+            ]
+        };
+        return TypedResults.BadRequest(JsonConvert.SerializeObject(errorResponse));
+    }
+    else
+    {
+        logger.LogError("Failed to retrieve data from the API. Status code: {err}", res.StatusCode);
+        var errorResponse = new ErrorResponse
+        {
+            Message = "Internal Server Error Request",
+            Detail =
+        [
+            new ErrorDetail
+            {
+                PropertyName = "Request",
+                Message = "Internal Server Error"
+            }
+        ]
+        };
+        return TypedResults.Problem("An error occurred while processing the request.", "Station", (int)HttpStatusCode.InternalServerError, "Internal Server Error");
+    }
+
+})
+.Produces<MeasuresResponse>(StatusCodes.Status200OK, "application/json")
+.Produces<ErrorResponse>(StatusCodes.Status404NotFound)
+.Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
+.Produces<ErrorResponse>(StatusCodes.Status500InternalServerError)
+.WithName("GetMeasures")
+.WithOpenApi(operation => new(operation)
+{
+    Summary = "All measures available from a particular station",
+    Description = "Retrieve the rainfall meaures detail for the specified stationId"
+})
+  .WithTags("Rainfall");
+
 // How to use logging in Program.cs file		
 app.Logger.LogInformation("The application started");
 
