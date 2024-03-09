@@ -1,5 +1,8 @@
+using Microsoft.AspNetCore.Diagnostics;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.OpenApi.Models;
+using MiniApiWeatherForecast.Models;
 using Newtonsoft.Json;
 using Serilog;
 using System.Net;
@@ -42,7 +45,30 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
+// Configure exception handling middleware
+app.UseExceptionHandler(errorApp =>
+{
+    errorApp.Run(async context =>
+    {
+        var exceptionHandlerPathFeature = context.Features.Get<IExceptionHandlerPathFeature>();
+        var exception = exceptionHandlerPathFeature?.Error;
+        // Get ILogger instance
+        var _logger = context.RequestServices.GetRequiredService<ILogger<Program>>();
 
+
+        // Log the exception
+        _logger.LogCritical("An exception occurred: {exception}", exception);
+
+        // Return a 500 status code with the ErrorResponse model
+        context.Response.StatusCode = StatusCodes.Status500InternalServerError;
+        context.Response.ContentType = "application/json";
+
+        await context.Response.WriteAsJsonAsync(new ErrorResponse
+        {
+            Message = "Internal server error occurred."
+        });
+    });
+});
 
 app.UseHttpsRedirection();
 
@@ -59,45 +85,61 @@ app.MapGet("/", (ILoggerFactory loggerFactory) =>
 .WithName("Index")
 .WithTags("Rainfall");
 
-app.MapGet("/id/stations/{id}", async (string id, IHttpClientFactory clientFactory, ILoggerFactory loggerFactory) =>
+app.MapGet("/stations/{id}", async Task<IResult> (string id, IHttpClientFactory clientFactory, ILoggerFactory loggerFactory) =>
 {
     var logger = loggerFactory.CreateLogger("stations");
-    try
+
+    var client = clientFactory.CreateClient("WeatherForecastApi");
+    var res = await client.GetAsync($"/flood-monitoring/id/stations/{id}");
+
+    if (res.IsSuccessStatusCode)
     {
-        var client = clientFactory.CreateClient("WeatherForecastApi");
-        var res = await client.GetAsync($"/flood-monitoring/id/stations/{id}");
-
-        if (res.IsSuccessStatusCode)
-        {
-            var content = await res.Content.ReadAsStringAsync();
-            return Results.Ok(JsonConvert.SerializeObject(content));
-        }
-        else if (res.StatusCode == HttpStatusCode.NotFound)
-        {
-
-            return Results.NotFound();
-        }
-        else if (res.StatusCode == HttpStatusCode.BadRequest)
-        {
-            return Results.BadRequest();
-        }
-        else
-        {
-            logger.LogError("Failed to retrieve data from the API. Status code: {err}", res.StatusCode);
-
-            return Results.Problem("An error occurred while processing the request.", "Station", (int)HttpStatusCode.InternalServerError, "Internal Server Error");
-        }
+        var content = await res.Content.ReadAsStringAsync();
+        return TypedResults.Ok(JsonConvert.DeserializeObject<StationResponse>(content));
     }
-    catch(Exception ex)
+    else if (res.StatusCode == HttpStatusCode.NotFound)
     {
-        logger.LogError("Exception occured station: {err}", ex.Message);
-        return Results.Problem("An error occurred while processing the request.", "Station", (int)HttpStatusCode.InternalServerError, "Internal Server Error");
+        var errorResponse = new ErrorResponse
+        {
+            Message = "NotFound Request",
+            Detail =
+        [
+            new ErrorDetail
+            {
+                PropertyName = "Request",
+                Message = "Not found for the specified stationId"
+            }
+        ]
+        };
+        return TypedResults.NotFound(JsonConvert.SerializeObject(errorResponse));
     }
+    else if (res.StatusCode == HttpStatusCode.BadRequest)
+    {
+        var errorResponse = new ErrorResponse
+        {
+            Message = "Bad Request",
+            Detail =
+            [
+                new ErrorDetail
+                {
+                    PropertyName = "Request",
+                    Message = "The request is invalid."
+                }
+            ]
+        };
+        return TypedResults.BadRequest(JsonConvert.SerializeObject(errorResponse));
+    }
+    else
+    {
+        logger.LogError("Failed to retrieve data from the API. Status code: {err}", res.StatusCode);
+        return TypedResults.Problem("An error occurred while processing the request.", "Station", (int)HttpStatusCode.InternalServerError, "Internal Server Error");
+    }
+
 })
-.Produces<dynamic>(StatusCodes.Status200OK)
-.Produces(StatusCodes.Status404NotFound)
-.Produces(StatusCodes.Status400BadRequest)
-.Produces(StatusCodes.Status500InternalServerError)
+.Produces<StationResponse>(StatusCodes.Status200OK, "application/json")
+.Produces<ErrorResponse>(StatusCodes.Status404NotFound)
+.Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
+.Produces<ErrorResponse>(StatusCodes.Status500InternalServerError)
 .WithName("GetStation")
 .WithOpenApi(operation => new(operation)
 {
@@ -105,7 +147,6 @@ app.MapGet("/id/stations/{id}", async (string id, IHttpClientFactory clientFacto
     Description = "Retrieve the station details for the specified stationId"
 })
   .WithTags("Rainfall");
-
 
 // How to use logging in Program.cs file		
 app.Logger.LogInformation("The application started");
